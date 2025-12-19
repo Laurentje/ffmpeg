@@ -1,0 +1,70 @@
+name: Build Media3 FFmpeg AAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      media_ref:
+        description: "androidx/media repo tag/branch (örn: 1.5.1)"
+        required: true
+        default: "1.5.1"
+      ndk_version:
+        description: "Android NDK version"
+        required: true
+        default: "25.2.9519653"
+      api_level:
+        description: "Min API level"
+        required: true
+        default: "23"
+      enabled_decoders:
+        description: "FFmpeg enabled decoders (space-separated)"
+        required: true
+        default: "aac opus mp3 flac alac ac3 eac3"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout androidx/media
+        uses: actions/checkout@v4
+        with:
+          repository: androidx/media
+          ref: ${{ inputs.media_ref }}
+          path: media
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;${{ inputs.ndk_version }}" "platforms;android-${{ inputs.api_level }}"
+          echo "NDK=$ANDROID_SDK_ROOT/ndk/${{ inputs.ndk_version }}" >> $GITHUB_ENV
+
+      - name: Build FFmpeg native libs
+        run: |
+          cd media/libraries/decoder_ffmpeg/src/main/jni
+          chmod +x build_ffmpeg.sh
+
+          FFMPEG_MODULE_PATH="$(cd .. && pwd)"
+          HOST_PLATFORM="linux-x86_64"
+          ANDROID_ABI="${{ inputs.api_level }}"
+
+          read -ra DEC <<< "${{ inputs.enabled_decoders }}"
+          ./build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK" "$HOST_PLATFORM" "$ANDROID_ABI" "${DEC[@]}"
+
+      - name: Build AAR
+        run: |
+          cd media
+          ./gradlew :libraries:decoder_ffmpeg:assembleRelease
+
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: media3-decoder-ffmpeg-aar
+          path: media/libraries/decoder_ffmpeg/build/outputs/aar/*release*.aar
