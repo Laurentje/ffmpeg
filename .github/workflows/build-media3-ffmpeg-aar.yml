@@ -25,13 +25,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout androidx/media (with submodules)
-        uses: actions/checkout@v4
-        with:
-          repository: androidx/media
-          ref: ${{ inputs.media_ref }}
-          path: media
-          submodules: recursive
+      - name: Clone androidx/media with submodules
+        run: |
+          git clone --branch "${{ inputs.media_ref }}" --recurse-submodules https://github.com/androidx/media.git media
+          echo "=== jni dir ==="
+          ls -la media/libraries/decoder_ffmpeg/src/main/jni
+          echo "=== ffmpeg dir (must exist) ==="
+          ls -la media/libraries/decoder_ffmpeg/src/main/jni/ffmpeg
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
