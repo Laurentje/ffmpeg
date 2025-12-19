@@ -1,22 +1,26 @@
-name: Build Media3 FFmpeg AAR
+name: Build Media3 FFmpeg (decoder_ffmpeg) AAR
 
 on:
   workflow_dispatch:
     inputs:
       media_ref:
-        description: "androidx/media repo tag/branch (örn: 1.5.1)"
+        description: "androidx/media tag/branch (örn: 1.5.1)"
         required: true
         default: "1.5.1"
+      ffmpeg_ref:
+        description: "FFmpeg tag/branch (örn: n6.1.1)"
+        required: true
+        default: "n6.1.1"
       ndk_version:
-        description: "Android NDK version"
+        description: "Android NDK version (sdkmanager formatı)"
         required: true
         default: "25.2.9519653"
       api_level:
-        description: "Min API level"
+        description: "Android API level (örn: 21, 23)"
         required: true
-        default: "23"
+        default: "21"
       enabled_decoders:
-        description: "FFmpeg enabled decoders (space-separated)"
+        description: "Enabled decoders (space-separated) örn: aac opus mp3 flac alac ac3 eac3"
         required: true
         default: "aac opus mp3 flac alac ac3 eac3"
 
@@ -25,13 +29,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clone androidx/media with submodules
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install build deps
         run: |
-          git clone --branch "${{ inputs.media_ref }}" --recurse-submodules https://github.com/androidx/media.git media
-          echo "=== jni dir ==="
-          ls -la media/libraries/decoder_ffmpeg/src/main/jni
-          echo "=== ffmpeg dir (must exist) ==="
-          ls -la media/libraries/decoder_ffmpeg/src/main/jni/ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git make pkg-config yasm nasm autoconf automake libtool cmake ninja-build
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -42,20 +47,33 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install build tools
+      - name: Install Android platform + NDK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm yasm pkg-config autoconf automake libtool make
-
-      - name: Accept Android licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Install NDK + platform
-        run: |
-          sdkmanager --install "ndk;${{ inputs.ndk_version }}" "platforms;android-${{ inputs.api_level }}"
+          yes | sdkmanager --licenses
+          sdkmanager --install "platforms;android-${{ inputs.api_level }}" "ndk;${{ inputs.ndk_version }}"
           echo "NDK=$ANDROID_SDK_ROOT/ndk/${{ inputs.ndk_version }}" >> $GITHUB_ENV
 
+      - name: Clone androidx/media
+        run: |
+          rm -rf media
+          git clone --branch "${{ inputs.media_ref }}" --recurse-submodules https://github.com/androidx/media.git media
+
+      - name: Clone FFmpeg source
+        run: |
+          rm -rf ffmpeg-src
+          git clone --depth 1 --branch "${{ inputs.ffmpeg_ref }}" https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+
+      - name: Link FFmpeg into decoder_ffmpeg jni folder
+        run: |
+          JNI_DIR="media/libraries/decoder_ffmpeg/src/main/jni"
+          mkdir -p "$JNI_DIR"
+          rm -f "$JNI_DIR/ffmpeg"
+          ln -s "$GITHUB_WORKSPACE/ffmpeg-src" "$JNI_DIR/ffmpeg"
+          ls -la "$JNI_DIR"
+          ls -la "$JNI_DIR/ffmpeg" | head -n 50
+
       - name: Build FFmpeg native libs
+        shell: bash
         run: |
           cd media/libraries/decoder_ffmpeg/src/main/jni
           chmod +x build_ffmpeg.sh
@@ -64,13 +82,18 @@ jobs:
           HOST_PLATFORM="linux-x86_64"
           ANDROID_ABI="${{ inputs.api_level }}"
 
+          echo "FFMPEG_MODULE_PATH is $FFMPEG_MODULE_PATH"
+          echo "NDK path is $NDK"
+          echo "Host platform is $HOST_PLATFORM"
+          echo "ANDROID_ABI is $ANDROID_ABI"
+          echo "Enabled decoders are ${{ inputs.enabled_decoders }}"
+
           read -ra DEC <<< "${{ inputs.enabled_decoders }}"
           ./build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK" "$HOST_PLATFORM" "$ANDROID_ABI" "${DEC[@]}"
 
       - name: Build AAR
         run: |
           cd media
-          chmod +x ./gradlew
           ./gradlew :libraries:decoder_ffmpeg:assembleRelease --stacktrace
 
       - name: Upload AAR artifact
