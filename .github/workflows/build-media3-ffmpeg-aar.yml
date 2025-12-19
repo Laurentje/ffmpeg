@@ -1,4 +1,4 @@
-name: Build Media3 FFmpeg (decoder_ffmpeg) AAR
+name: Build Media3 FFmpeg AAR (1.5.1)
 
 on:
   workflow_dispatch:
@@ -18,9 +18,9 @@ on:
       api_level:
         description: "Android API level (örn: 21, 23)"
         required: true
-        default: "21"
+        default: "23"
       enabled_decoders:
-        description: "Enabled decoders (space-separated) örn: aac opus mp3 flac alac ac3 eac3"
+        description: "FFmpeg enabled decoders (space-separated)"
         required: true
         default: "aac opus mp3 flac alac ac3 eac3"
 
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout this repo
+      - name: Checkout this repo (workflow repo)
         uses: actions/checkout@v4
 
       - name: Install build deps
@@ -56,7 +56,7 @@ jobs:
       - name: Clone androidx/media
         run: |
           rm -rf media
-          git clone --branch "${{ inputs.media_ref }}" --recurse-submodules https://github.com/androidx/media.git media
+          git clone --branch "${{ inputs.media_ref }}" https://github.com/androidx/media.git media
 
       - name: Clone FFmpeg source
         run: |
@@ -69,7 +69,9 @@ jobs:
           mkdir -p "$JNI_DIR"
           rm -f "$JNI_DIR/ffmpeg"
           ln -s "$GITHUB_WORKSPACE/ffmpeg-src" "$JNI_DIR/ffmpeg"
+          echo "=== jni dir ==="
           ls -la "$JNI_DIR"
+          echo "=== ffmpeg dir ==="
           ls -la "$JNI_DIR/ffmpeg" | head -n 50
 
       - name: Build FFmpeg native libs
@@ -91,10 +93,11 @@ jobs:
           read -ra DEC <<< "${{ inputs.enabled_decoders }}"
           ./build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK" "$HOST_PLATFORM" "$ANDROID_ABI" "${DEC[@]}"
 
-      - name: Build AAR
+      - name: Build AAR (correct module name)
         run: |
           cd media
-          ./gradlew :libraries:decoder_ffmpeg:assembleRelease --stacktrace
+          chmod +x ./gradlew
+          ./gradlew :lib-decoder-ffmpeg:assembleRelease --stacktrace
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
