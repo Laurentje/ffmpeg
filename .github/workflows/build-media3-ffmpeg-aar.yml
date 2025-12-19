@@ -12,9 +12,9 @@ on:
         required: true
         default: "n6.1.1"
       ndk_version:
-        description: "Android NDK version (sdkmanager formatı)"
+        description: "Android NDK version (sdkmanager formatı) - media3 genelde 25.1 ister"
         required: true
-        default: "25.2.9519653"
+        default: "25.1.8937393"
       api_level:
         description: "Android API level (örn: 21, 23)"
         required: true
@@ -69,10 +69,6 @@ jobs:
           mkdir -p "$JNI_DIR"
           rm -f "$JNI_DIR/ffmpeg"
           ln -s "$GITHUB_WORKSPACE/ffmpeg-src" "$JNI_DIR/ffmpeg"
-          echo "=== jni dir ==="
-          ls -la "$JNI_DIR"
-          echo "=== ffmpeg dir ==="
-          ls -la "$JNI_DIR/ffmpeg" | head -n 30
 
       - name: Build FFmpeg native libs
         shell: bash
@@ -84,16 +80,10 @@ jobs:
           HOST_PLATFORM="linux-x86_64"
           ANDROID_ABI="${{ inputs.api_level }}"
 
-          echo "FFMPEG_MODULE_PATH is $FFMPEG_MODULE_PATH"
-          echo "NDK path is $NDK"
-          echo "Host platform is $HOST_PLATFORM"
-          echo "ANDROID_ABI is $ANDROID_ABI"
-          echo "Enabled decoders are ${{ inputs.enabled_decoders }}"
-
           read -ra DEC <<< "${{ inputs.enabled_decoders }}"
           ./build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK" "$HOST_PLATFORM" "$ANDROID_ABI" "${DEC[@]}"
 
-      - name: Patch CMakeLists to link libc (fix undefined stderr)
+      - name: Patch CMakeLists (add libc correctly)
         run: |
           python3 - <<'PY'
           import re
@@ -102,23 +92,39 @@ jobs:
           p = Path("media/libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt")
           s = p.read_text()
 
-          # target_link_libraries(ffmpegJNI ...) içine 'c' ekle (yoksa)
-          m = re.search(r"target_link_libraries\(\s*ffmpegJNI\b", s)
+          # ffmpegJNI target_link_libraries bloğunu bul
+          m = re.search(r"target_link_libraries\(\s*ffmpegJNI\b.*?\)", s, re.S)
           if not m:
-              raise SystemExit("ERROR: target_link_libraries(ffmpegJNI ...) not found in CMakeLists.txt")
+            raise SystemExit("ERROR: target_link_libraries(ffmpegJNI ...) not found")
 
-          if re.search(r"target_link_libraries\(\s*ffmpegJNI\b[^)]*\bc\b", s, re.S):
-              print("OK: 'c' already present in target_link_libraries(ffmpegJNI ...)")
+          block = m.group(0)
+
+          # Zaten c varsa dokunma
+          if re.search(r"(?<![A-Za-z0-9_])c(?![A-Za-z0-9_])", block):
+            print("OK: libc 'c' already present")
+            raise SystemExit(0)
+
+          # Keyword signature varsa (PUBLIC/PRIVATE/INTERFACE), c'yi keyword'den sonra ekle
+          if re.search(r"target_link_libraries\(\s*ffmpegJNI\s+(PUBLIC|PRIVATE|INTERFACE)\b", block):
+            new_block = re.sub(
+              r"(target_link_libraries\(\s*ffmpegJNI\s+(?:PUBLIC|PRIVATE|INTERFACE)\b)",
+              r"\1 c",
+              block,
+              count=1
+            )
           else:
-              s = re.sub(r"(target_link_libraries\(\s*ffmpegJNI\b)", r"\1 c", s, count=1)
-              p.write_text(s)
-              print("PATCHED: added 'c' to target_link_libraries(ffmpegJNI ...)")
+            # Eski signature: target_link_libraries(ffmpegJNI a b c)
+            new_block = re.sub(
+              r"(target_link_libraries\(\s*ffmpegJNI\b)",
+              r"\1 c",
+              block,
+              count=1
+            )
 
-          # debug: print the line(s)
-          print("---- target_link_libraries lines ----")
-          for i, line in enumerate(s.splitlines(), 1):
-              if "target_link_libraries" in line:
-                  print(f"{i}: {line}")
+          s2 = s[:m.start()] + new_block + s[m.end():]
+          p.write_text(s2)
+
+          print("PATCHED: added 'c' to ffmpegJNI target_link_libraries with correct ordering")
           PY
 
       - name: Build AAR
