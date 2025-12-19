@@ -36,7 +36,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git make pkg-config yasm nasm autoconf automake libtool cmake ninja-build
+            git make pkg-config yasm nasm autoconf automake libtool cmake ninja-build python3
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -72,7 +72,7 @@ jobs:
           echo "=== jni dir ==="
           ls -la "$JNI_DIR"
           echo "=== ffmpeg dir ==="
-          ls -la "$JNI_DIR/ffmpeg" | head -n 50
+          ls -la "$JNI_DIR/ffmpeg" | head -n 30
 
       - name: Build FFmpeg native libs
         shell: bash
@@ -93,7 +93,35 @@ jobs:
           read -ra DEC <<< "${{ inputs.enabled_decoders }}"
           ./build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK" "$HOST_PLATFORM" "$ANDROID_ABI" "${DEC[@]}"
 
-      - name: Build AAR (correct module name)
+      - name: Patch CMakeLists to link libc (fix undefined stderr)
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          p = Path("media/libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt")
+          s = p.read_text()
+
+          # target_link_libraries(ffmpegJNI ...) içine 'c' ekle (yoksa)
+          m = re.search(r"target_link_libraries\(\s*ffmpegJNI\b", s)
+          if not m:
+              raise SystemExit("ERROR: target_link_libraries(ffmpegJNI ...) not found in CMakeLists.txt")
+
+          if re.search(r"target_link_libraries\(\s*ffmpegJNI\b[^)]*\bc\b", s, re.S):
+              print("OK: 'c' already present in target_link_libraries(ffmpegJNI ...)")
+          else:
+              s = re.sub(r"(target_link_libraries\(\s*ffmpegJNI\b)", r"\1 c", s, count=1)
+              p.write_text(s)
+              print("PATCHED: added 'c' to target_link_libraries(ffmpegJNI ...)")
+
+          # debug: print the line(s)
+          print("---- target_link_libraries lines ----")
+          for i, line in enumerate(s.splitlines(), 1):
+              if "target_link_libraries" in line:
+                  print(f"{i}: {line}")
+          PY
+
+      - name: Build AAR
         run: |
           cd media
           chmod +x ./gradlew
