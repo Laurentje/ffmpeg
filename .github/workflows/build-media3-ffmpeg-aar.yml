@@ -8,7 +8,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # 1) Media3 (androidx/media) kaynak kodu
       - name: Checkout androidx/media (Media3 1.5.1)
         uses: actions/checkout@v4
         with:
@@ -16,14 +15,12 @@ jobs:
           ref: 1.5.1
           fetch-depth: 0
 
-      # 2) JDK 17
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # 3) Linux build bağımlılıkları
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -31,11 +28,9 @@ jobs:
             git make autoconf automake libtool pkg-config \
             cmake ninja-build yasm nasm meson
 
-      # 4) Android SDK kur
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # 5) SDK / NDK / CMake kur (NDK r26b)
       - name: Install Android packages (NDK r26b + CMake)
         run: |
           yes | sdkmanager --licenses
@@ -46,25 +41,19 @@ jobs:
             "cmake;3.22.1" \
             "ndk;26.1.10909125"
 
-      # 6) FFmpeg source'u script'in beklediği klasöre indir
-      # Script: libraries/decoder_ffmpeg/src/main/jni/ffmpeg/ffmpeg  bekliyor
-      - name: Fetch FFmpeg source (release/6.0)
+      # ✅ ÖNEMLİ: FFmpeg kaynağı direkt .../jni/ffmpeg içine gelecek (configure burada olacak)
+      - name: Fetch FFmpeg source into expected folder
         run: |
           set -eux
-          FFMPEG_MODULE_PATH="$GITHUB_WORKSPACE/libraries/decoder_ffmpeg/src/main"
-          mkdir -p "$FFMPEG_MODULE_PATH/jni/ffmpeg"
-          cd "$FFMPEG_MODULE_PATH/jni/ffmpeg"
+          FFMPEG_SRC_DIR="$GITHUB_WORKSPACE/libraries/decoder_ffmpeg/src/main/jni/ffmpeg"
 
-          # Eğer daha önce varsa temizle
-          rm -rf ffmpeg
+          # Script burada ./configure arıyor. O yüzden source direkt bu klasörde olmalı.
+          rm -rf "$FFMPEG_SRC_DIR"
+          git clone --depth 1 --branch release/6.0 https://github.com/FFmpeg/FFmpeg.git "$FFMPEG_SRC_DIR"
 
-          # FFmpeg kaynak kodu
-          git clone --depth 1 --branch release/6.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+          # Kontrol: configure var mı?
+          test -f "$FFMPEG_SRC_DIR/configure"
 
-          # Kontrol: klasör var mı?
-          test -d "$FFMPEG_MODULE_PATH/jni/ffmpeg/ffmpeg"
-
-      # 7) FFmpeg'i derle (static libs üretir)
       - name: Build FFmpeg native libs
         run: |
           set -eux
@@ -81,13 +70,11 @@ jobs:
             "$FFMPEG_MODULE_PATH" "$NDK_PATH" "$HOST_PLATFORM" "$ANDROID_ABI" \
             "${ENABLED_DECODERS[@]}"
 
-      # 8) AAR üret
       - name: Assemble lib-decoder-ffmpeg AAR
         run: |
           set -eux
           ./gradlew :lib-decoder-ffmpeg:assembleRelease
 
-      # 9) Üretilen AAR'ı artifact olarak yükle
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
